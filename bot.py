@@ -12,7 +12,7 @@ from telegram.ext import (
     ContextTypes,
 )
 import anthropic
-import openai
+from groq import Groq
 import notion_helper
 
 logging.basicConfig(
@@ -26,11 +26,7 @@ ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
 GROQ_API_KEY = os.environ["GROQ_API_KEY"]
 
 claude_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-# Groq expone la misma API que OpenAI, solo cambia la base_url
-openai_client = openai.OpenAI(
-    api_key=GROQ_API_KEY,
-    base_url="https://api.groq.com/openai/v1",
-)
+groq_client = Groq(api_key=GROQ_API_KEY)
 
 IDLE = "idle"
 WAITING_NEW_CAT = "waiting_new_cat"
@@ -203,7 +199,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         audio_buffer = io.BytesIO(bytes(audio_bytes))
         audio_buffer.name = "voice.ogg"
 
-        transcript = openai_client.audio.transcriptions.create(
+        transcript = groq_client.audio.transcriptions.create(
             model="whisper-large-v3-turbo",
             file=audio_buffer,
         )
