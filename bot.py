@@ -1,3 +1,4 @@
+import io
 import os
 import logging
 import re
@@ -11,6 +12,7 @@ from telegram.ext import (
     ContextTypes,
 )
 import anthropic
+import openai
 import notion_helper
 
 logging.basicConfig(
@@ -21,8 +23,10 @@ logger = logging.getLogger(__name__)
 
 TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
 ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
+OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
 
 claude_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+openai_client = openai.OpenAI(api_key=OPENAI_API_KEY)
 
 IDLE = "idle"
 WAITING_NEW_CAT = "waiting_new_cat"
@@ -75,8 +79,9 @@ def build_category_keyboard(categories: list[str]) -> InlineKeyboardMarkup:
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         "Hola! Podés enviarme:\n"
-        "• Links, fotos o notas de texto → las guardo en Notion por categoría\n"
-        "• Preguntas → te respondo usando tus notas guardadas como contexto\n\n"
+        "• 🎙️ Notas de voz → las transcribo y proceso\n"
+        "• 🔗 Links, 📷 fotos o 📝 texto → los guardo en Notion por categoría\n"
+        "• ❓ Preguntas → te respondo usando tus notas guardadas como contexto\n\n"
         "Comandos:\n"
         "/notas — ver resumen de categorías guardadas\n"
         "/reset — borrar historial de conversación"
@@ -148,9 +153,13 @@ async def _ask_category(message, note: dict, chat_id: int) -> None:
     await message.reply_text(prompt, reply_markup=keyboard)
 
 
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    chat_id = update.effective_chat.id
-    text = update.message.text
+async def _process_text_input(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    text: str,
+    chat_id: int,
+) -> None:
+    """Core logic shared by text messages and transcribed voice notes."""
     state = get_state(chat_id)
 
     if state["state"] == WAITING_NEW_CAT:
@@ -173,6 +182,35 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await _ask_category(update.message, note, chat_id)
     else:
         await _answer_with_context(update, context, text, chat_id)
+
+
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await _process_text_input(update, context, update.message.text, update.effective_chat.id)
+
+
+async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    chat_id = update.effective_chat.id
+    await context.bot.send_chat_action(chat_id=chat_id, action="typing")
+
+    try:
+        voice_file = await context.bot.get_file(update.message.voice.file_id)
+        audio_bytes = await voice_file.download_as_bytearray()
+
+        audio_buffer = io.BytesIO(bytes(audio_bytes))
+        audio_buffer.name = "voice.ogg"
+
+        transcript = openai_client.audio.transcriptions.create(
+            model="whisper-1",
+            file=audio_buffer,
+        )
+        text = transcript.text.strip()
+    except Exception as e:
+        logger.error("Error al transcribir audio: %s", e)
+        await update.message.reply_text("No pude transcribir el audio. Intentá de nuevo.")
+        return
+
+    await update.message.reply_text(f"🎙️ _{text}_", parse_mode="Markdown")
+    await _process_text_input(update, context, text, chat_id)
 
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -239,6 +277,7 @@ def main() -> None:
     app.add_handler(CommandHandler("notas", cmd_notas))
     app.add_handler(CommandHandler("reset", cmd_reset))
     app.add_handler(CallbackQueryHandler(handle_category_callback))
+    app.add_handler(MessageHandler(filters.VOICE, handle_voice))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     logger.info("Bot iniciado.")
