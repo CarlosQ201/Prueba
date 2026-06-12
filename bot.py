@@ -23,10 +23,14 @@ logger = logging.getLogger(__name__)
 
 TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
 ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
-OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
+GROQ_API_KEY = os.environ["GROQ_API_KEY"]
 
 claude_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-openai_client = openai.OpenAI(api_key=OPENAI_API_KEY)
+# Groq expone la misma API que OpenAI, solo cambia la base_url
+openai_client = openai.OpenAI(
+    api_key=GROQ_API_KEY,
+    base_url="https://api.groq.com/openai/v1",
+)
 
 IDLE = "idle"
 WAITING_NEW_CAT = "waiting_new_cat"
@@ -200,7 +204,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         audio_buffer.name = "voice.ogg"
 
         transcript = openai_client.audio.transcriptions.create(
-            model="whisper-1",
+            model="whisper-large-v3-turbo",
             file=audio_buffer,
         )
         text = transcript.text.strip()
